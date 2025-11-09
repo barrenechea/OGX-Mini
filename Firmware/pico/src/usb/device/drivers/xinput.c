@@ -43,6 +43,7 @@ typedef struct {
     uint8_t                 g726_in[XINPUT_EPSIZE_AUDIO_IN];
     gamepad_pcm_out_t       pcm_out;
     gamepad_pcm_in_t        pcm_in;
+    bool                    is_authenticated;
 } xinput_state_t;
 _Static_assert(sizeof(xinput_state_t) <= USBD_STATUS_BUF_SIZE, "XINPUT state size exceeds buffer size");
 
@@ -129,8 +130,13 @@ static bool xinput_set_config_cb(usbd_handle_t* handle, uint8_t config) {
 static bool handle_xsm3_auth(usbd_handle_t* handle, const usb_ctrl_req_t* req) {
     switch (req->bRequest) {
     case XINPUT_AUTH_REQ_1:
-        xsm3_initialise_state();
-        xsm3_set_identification_data(xsm3_id_data_ms_controller);
+        if (!xinput_state[handle->port]->is_authenticated) {
+            xsm3_initialise_state();
+            xsm3_set_identification_data(xsm3_id_data_ms_controller);
+            ogxm_logd("XSM3: device not authenticated, setting ID data");
+        } else {
+            ogxm_logd("XSM3: device already authenticated, resending ID data");
+        }
         ogxm_logd("XSM3: send identification data (0x81)");
         return usbd_send_ctrl_resp(handle, xsm3_id_data_ms_controller,
                                     sizeof(xsm3_id_data_ms_controller), NULL);
@@ -172,6 +178,7 @@ static bool handle_xsm3_auth(usbd_handle_t* handle, const usb_ctrl_req_t* req) {
         {
             uint16_t auth_state = 2; // 1 = in-progress, 2 = complete
             ogxm_logd("XSM3: auth complete (0x86)");
+            xinput_state[handle->port]->is_authenticated = true;
             return usbd_send_ctrl_resp(handle, &auth_state, sizeof(auth_state), NULL);
         }
     
@@ -350,6 +357,7 @@ static usbd_handle_t* xinput_init(const usb_device_driver_cfg_t* cfg) {
     if (handle != NULL) {
         xinput_state[handle->port] = (xinput_state_t*)cfg->usb.status_buffer;
         memset(xinput_state[handle->port], 0, sizeof(xinput_state_t));
+        xinput_state[handle->port]->is_authenticated = false;
         xinput_state[handle->port]->audio_en  = (cfg->usb.addons & USBD_ADDON_HEADSET);
         if (xinput_state[handle->port]->audio_en) {
             g726_init_state(&xinput_state[handle->port]->g726_ctx_encode);
